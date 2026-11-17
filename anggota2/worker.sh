@@ -1,28 +1,21 @@
 #!/bin/bash
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$DIR/.." && pwd)"
+
 cd "$DIR" || exit 1
 
 ANTRIAN="antrean.txt"
 LOCK="worker.lock"
 LOG="logs/worker.log"
+STATUS="$ROOT/monitoring/status.sh"
 
-# Membatasi permission file yang dibuat menjadi 600
 umask 077
 
-# Memastikan file antrean tersedia
-if [ ! -f "$ANTRIAN" ]; then
-    echo "ERROR: File antrean tidak ditemukan."
-    exit 1
-fi
+mkdir -p logs
+touch "$ANTRIAN"
+chmod 600 "$ANTRIAN"
 
-# Memastikan permission antrean hanya dapat diakses pemilik
-if ! chmod 600 "$ANTRIAN"; then
-    echo "ERROR: Gagal mengatur permission antrean."
-    exit 1
-fi
-
-# Mengambil lock secara non-blocking
 exec 9>"$LOCK"
 
 if ! flock -n 9; then
@@ -35,46 +28,58 @@ echo "Worker mulai memproses antrean."
 
 while [ -s "$ANTRIAN" ]; do
 
-    # Membaca pekerjaan pertama tanpa menghapusnya
-    PEKERJAAN="$(head -n 1 "$ANTRIAN")"
+    BARIS="$(head -n 1 "$ANTRIAN")"
 
-    if [ -z "$PEKERJAAN" ]; then
+    if [ -z "$BARIS" ]; then
         break
     fi
 
-    echo "Mengambil: $PEKERJAAN"
-    echo "$(date '+%F %T') - Memproses: $PEKERJAAN" >> "$LOG"
+    JOB_ID="${BARIS%%|*}"
+    PEKERJAAN="${BARIS#*|}"
 
-    # Menjalankan pekerjaan terlebih dahulu
-    if ! ./pekerjaan_dummy.sh "$PEKERJAAN"; then
+    if [ "$JOB_ID" = "$PEKERJAAN" ] || [ -z "$PEKERJAAN" ]; then
+        echo "ERROR: Format antrean tidak valid: $BARIS"
+        exit 1
+    fi
+
+    echo "Mengambil: $JOB_ID - $PEKERJAAN"
+    echo "$(date '+%F %T') - Memproses: $JOB_ID - $PEKERJAAN" >> "$LOG"
+
+    if ! "$STATUS" start "$JOB_ID" "$$"; then
+        echo "ERROR: Gagal memperbarui status running."
+        exit 1
+    fi
+
+    ./pekerjaan_dummy.sh "$PEKERJAAN"
+    EXIT_CODE=$?
+
+    if ! "$STATUS" finish "$JOB_ID" "$EXIT_CODE"; then
+        echo "ERROR: Gagal memperbarui status akhir."
+        exit 1
+    fi
+
+    if [ "$EXIT_CODE" -ne 0 ]; then
         echo "ERROR: $PEKERJAAN gagal dijalankan."
-        echo "$(date '+%F %T') - GAGAL: $PEKERJAAN" >> "$LOG"
+        echo "$(date '+%F %T') - GAGAL: $JOB_ID" >> "$LOG"
         echo "Pekerjaan tetap disimpan dalam antrean."
         exit 1
     fi
 
-    # Pekerjaan baru dihapus setelah berhasil dijalankan
     TEMP="${ANTRIAN}.tmp.$$"
 
     if ! tail -n +2 "$ANTRIAN" > "$TEMP"; then
-        echo "ERROR: Gagal membuat antrean sementara."
         rm -f "$TEMP"
         exit 1
     fi
 
-    if ! chmod 600 "$TEMP"; then
-        echo "ERROR: Gagal mengatur permission file sementara."
-        rm -f "$TEMP"
-        exit 1
-    fi
+    chmod 600 "$TEMP"
 
     if ! mv "$TEMP" "$ANTRIAN"; then
-        echo "ERROR: Gagal memperbarui antrean."
         rm -f "$TEMP"
         exit 1
     fi
 
-    echo "$(date '+%F %T') - Selesai: $PEKERJAAN" >> "$LOG"
+    echo "$(date '+%F %T') - Selesai: $JOB_ID - $PEKERJAAN" >> "$LOG"
 
 done
 
