@@ -27,3 +27,21 @@ Hasil: Bukti pengujian akses dilampirkan terpisah.
 ## 5. Commit Kontribusi
 Commit terakhir: 4d4f718
 Branch: anggota-2-antrean-lock
+
+## Pengujian Integrasi Worker dan Sistem Status
+
+### Pengujian berhasil
+- Tiga pekerjaan berhasil ditambahkan ke antrean.
+- Status berubah dari waiting menjadi running dan success.
+- Pekerjaan diproses sesuai urutan FIFO: A, B, C.
+- Antrean kosong setelah semua pekerjaan berhasil diproses.
+
+### Pengujian kegagalan dan retry
+- Pekerjaan disimulasikan gagal dengan exit code 7.
+- Status berubah menjadi failed.
+- Pekerjaan tetap berada di antrean setelah gagal.
+- Setelah script dipulihkan, pekerjaan berhasil diproses ulang.
+- Status akhir berubah menjadi success dengan exit code 0.
+
+### Kesimpulan
+Integrasi FIFO, worker, file lock, dan sistem status berhasil diuji, termasuk mekanisme retry pekerjaan yang gagal.
